@@ -60,7 +60,7 @@ The filtering logic works as follows:
 
 <!-- begin_polyfills -->
 
-### Types (91)
+### Types (92)
 
 - `System.Buffers.SearchValues`
 - `System.Buffers.SearchValues<T> where T : System.IEquatable<T>?`
@@ -134,6 +134,7 @@ The filtering logic works as follows:
 - `System.Runtime.Versioning.UnsupportedOSPlatformAttribute`
 - `System.Runtime.Versioning.UnsupportedOSPlatformGuardAttribute`
 - `System.Security.Cryptography.CryptographicOperations`
+- `System.Text.CompositeFormat`
 - `System.Text.RegularExpressions.Regex.ValueMatchEnumerator`
 - `System.Text.RegularExpressions.Regex.ValueSplitEnumerator`
 - `System.Text.RegularExpressions.ValueMatch`
@@ -154,7 +155,7 @@ The filtering logic works as follows:
 - `System.ValueTuple<T1, T2, T3, T4, T5, T6, T7>`
 - `System.ValueTuple<T1, T2, T3, T4, T5, T6, T7, TRest> where TRest : struct`
 
-### Methods (1053)
+### Methods (1055)
 
 - `System.ArgumentException.ThrowIfNullOrEmpty(System.String? argument, [System.String? paramName = null])`
 - `System.ArgumentException.ThrowIfNullOrWhiteSpace(System.String? argument, [System.String? paramName = null])`
@@ -968,6 +969,8 @@ The filtering logic works as follows:
 - `System.StringNormalizationExtensions.GetNormalizedLength(this System.ReadOnlySpan<System.Char> source, [System.Text.NormalizationForm normalizationForm = System.Text.NormalizationForm.FormC])`
 - `System.StringNormalizationExtensions.IsNormalized(this System.ReadOnlySpan<System.Char> source, [System.Text.NormalizationForm normalizationForm = System.Text.NormalizationForm.FormC])`
 - `System.StringNormalizationExtensions.TryNormalize(this System.ReadOnlySpan<System.Char> source, System.Span<System.Char> destination, out System.Int32 charsWritten, [System.Text.NormalizationForm normalizationForm = System.Text.NormalizationForm.FormC])`
+- `System.Text.CompositeFormat.Parse(System.String format)`
+- `System.Text.CompositeFormat.ValidateNumberOfArgs(System.Int32 numArgs)`
 - `System.Text.Encoding.GetByteCount(System.ReadOnlySpan<System.Char> chars)`
 - `System.Text.Encoding.GetBytes(System.ReadOnlySpan<System.Char> chars, System.Span<System.Byte> bytes)`
 - `System.Text.Encoding.GetCharCount(System.ReadOnlySpan<System.Byte> bytes)`
@@ -1210,7 +1213,7 @@ The filtering logic works as follows:
 - `System.Xml.Linq.XNode.ReadFromAsync(System.Xml.XmlReader reader, System.Threading.CancellationToken cancellationToken)`
 - `System.Xml.Linq.XNode.WriteToAsync(System.Xml.XmlWriter writer, System.Threading.CancellationToken cancellationToken)`
 
-### Properties (205)
+### Properties (207)
 
 - `System.DateTimeOffset.UnixEpoch`
 - `System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.CSharp = "C#"`
@@ -1398,6 +1401,8 @@ The filtering logic works as follows:
 - `System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.Message`
 - `System.Runtime.Versioning.RequiresPreviewFeaturesAttribute.Url`
 - `System.Runtime.Versioning.UnsupportedOSPlatformAttribute.Message`
+- `System.Text.CompositeFormat.Format`
+- `System.Text.CompositeFormat.MinimumArgumentCount`
 - `System.Text.Encoding.Latin1`
 - `System.Text.RegularExpressions.Capture.ValueSpan`
 - `System.Text.RunePosition.Length`

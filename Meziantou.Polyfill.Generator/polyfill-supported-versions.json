@@ -6709,6 +6709,12 @@
       "net10.0",
       "net11.0"
     ],
+    "T:System.Text.CompositeFormat": [
+      "net8.0",
+      "net9.0",
+      "net10.0",
+      "net11.0"
+    ],
     "T:System.Text.RegularExpressions.Regex.ValueMatchEnumerator": [
       "net7.0",
       "net8.0",
