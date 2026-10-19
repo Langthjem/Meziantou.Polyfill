@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Buffers;
 using System.Collections;
 using System.Collections.Generic;
@@ -104,6 +104,63 @@ public class SystemTests
         Assert.Throws<ArgumentException>(() => "".Replace("", "dummy", StringComparison.OrdinalIgnoreCase));
         Assert.Throws<ArgumentNullException>(() => "".Replace(null!, "dummy", StringComparison.OrdinalIgnoreCase));
     }
+
+#pragma warning disable RS0030 // Culture-sensitive comparisons are the subject of these tests
+    [Theory]
+    [InlineData(StringComparison.InvariantCulture)]
+    [InlineData(StringComparison.InvariantCultureIgnoreCase)]
+    public void String_Replace_CultureSensitive_MatchLongerThanOldValue(StringComparison comparisonType)
+    {
+        // U+00AD SOFT HYPHEN is ignorable by the collation, so the matched region is longer than oldValue
+        Assert.Equal("Z", "ab\u00ADc".Replace("abc", "Z", comparisonType));
+        Assert.Equal("Z", "a\u00ADb\u00ADc".Replace("abc", "Z", comparisonType));
+        Assert.Equal("xZy", "xa\u00ADbcy".Replace("abc", "Z", comparisonType));
+        Assert.Equal("Z Z", "a\u00ADbc a\u00ADbc".Replace("abc", "Z", comparisonType));
+        Assert.Equal("\u00ADZ\u00AD", "\u00ADabc\u00AD".Replace("abc", "Z", comparisonType));
+    }
+
+    [Theory]
+    [InlineData(StringComparison.InvariantCulture)]
+    [InlineData(StringComparison.InvariantCultureIgnoreCase)]
+    public void String_Replace_CultureSensitive_MatchShorterThanOldValue(StringComparison comparisonType)
+    {
+        Assert.Equal("Z", "ac".Replace("a\u00ADc", "Z", comparisonType));
+        Assert.Equal("Z Z", "ac ac".Replace("a\u00ADc", "Z", comparisonType));
+    }
+
+    [Theory]
+    [InlineData(StringComparison.InvariantCulture)]
+    [InlineData(StringComparison.InvariantCultureIgnoreCase)]
+    public void String_Replace_CultureSensitive_IgnorableOldValue(StringComparison comparisonType)
+    {
+        // oldValue has no collation weight, so nothing is replaced
+        Assert.Equal("abc", "abc".Replace("\u00AD", "Z", comparisonType));
+        Assert.Equal("ab\u00ADc", "ab\u00ADc".Replace("\u00AD", "Z", comparisonType));
+        Assert.Equal("\u00AD\u00AD", "\u00AD\u00AD".Replace("\u00AD", "Z", comparisonType));
+    }
+
+    [Theory]
+    [InlineData(StringComparison.InvariantCulture)]
+    [InlineData(StringComparison.InvariantCultureIgnoreCase)]
+    public void String_Replace_CultureSensitive_IgnorableTailInOldValue(StringComparison comparisonType)
+    {
+        // oldValue has no weightless tail, so the target's U+00AD is not part of the match
+        Assert.Equal("X\u00ADc", "ab\u00ADc".Replace("ab", "X", comparisonType));
+
+#if NETFRAMEWORK
+        // NLS folds the target characters that pair with oldValue's own weightless tail into the match, so
+        // the trailing U+00AD is replaced along with it. ICU does not do this, and .NET Framework is the
+        // only target framework here that always uses NLS.
+        Assert.Equal("Xc", "ab\u00ADc".Replace("ab\u00AD", "X", comparisonType));
+        Assert.Equal("X", "ab\u00AD".Replace("ab\u00AD", "X", comparisonType));
+        Assert.Equal("aXb", "a\u00DF\u00ADb".Replace("ss\u00AD", "X", comparisonType));
+        Assert.Equal("X Xc", "ab\u00AD ab\u00ADc".Replace("ab\u00AD", "X", comparisonType));
+
+        // A weightless oldValue still replaces nothing, even though its tail is weightless too
+        Assert.Equal("ab\u00ADc", "ab\u00ADc".Replace("\u00AD\u00AD", "X", comparisonType));
+#endif
+    }
+#pragma warning restore RS0030
 
     [Fact]
     public void String_Split()
@@ -433,6 +490,19 @@ public class SystemTests
     }
 
     [Fact]
+    public void String_Join_Char_NullValues()
+    {
+        var stringArray = Assert.Throws<ArgumentNullException>(() => string.Join(',', (string?[])null!));
+        Assert.Equal("value", stringArray.ParamName);
+
+        var objectArray = Assert.Throws<ArgumentNullException>(() => string.Join(',', (object?[])null!));
+        Assert.Equal("values", objectArray.ParamName);
+
+        var enumerable = Assert.Throws<ArgumentNullException>(() => string.Join(',', (IEnumerable<string>)null!));
+        Assert.Equal("values", enumerable.ParamName);
+    }
+
+    [Fact]
     public void ArgumentNullException_ThrowIfNull()
     {
         object? sample = null;
@@ -444,18 +514,23 @@ public class SystemTests
     }
 
     [Fact]
-    public unsafe void ArgumentNullException_ThrowIfNull_Pointer()
+    public void ArgumentNullException_ThrowIfNull_Pointer()
     {
-        void* sample = null;
-        var ex = Assert.Throws<ArgumentNullException>(() => ArgumentNullException.ThrowIfNull(sample));
-        Assert.Equal("sample", ex.ParamName);
+        // Under the updated memory safety rules the 'unsafe' modifier only marks the member as
+        // caller-unsafe, so an 'unsafe' block is needed to call the pointer overload
+        unsafe
+        {
+            void* sample = null;
+            var ex = Assert.Throws<ArgumentNullException>(() => ArgumentNullException.ThrowIfNull(sample));
+            Assert.Equal("sample", ex.ParamName);
 
-        nint argument = 1;
-        ArgumentNullException.ThrowIfNull(argument);
+            nint argument = 1;
+            ArgumentNullException.ThrowIfNull(argument);
+        }
     }
 
     [Fact]
-    public unsafe void ArgumentException_ThrowIfNullOrEmpty()
+    public void ArgumentException_ThrowIfNullOrEmpty()
     {
         var sample = "";
         var ex = Assert.Throws<ArgumentException>(() => ArgumentException.ThrowIfNullOrEmpty(sample));
@@ -466,7 +541,7 @@ public class SystemTests
     }
 
     [Fact]
-    public unsafe void ArgumentException_ThrowIfNullOrWhiteSpace()
+    public void ArgumentException_ThrowIfNullOrWhiteSpace()
     {
         var sample = "  ";
         var ex = Assert.Throws<ArgumentException>(() => ArgumentException.ThrowIfNullOrWhiteSpace(sample));
@@ -477,7 +552,7 @@ public class SystemTests
     }
 
     [Fact]
-    public unsafe void ObjectDisposedException_ThrowIf()
+    public void ObjectDisposedException_ThrowIf()
     {
         Assert.Throws<ObjectDisposedException>(() => ObjectDisposedException.ThrowIf(true, new object()));
         Assert.Throws<ObjectDisposedException>(() => ObjectDisposedException.ThrowIf(true, typeof(object)));
@@ -2883,9 +2958,13 @@ public class SystemTests
     [Fact]
     public void GC_AllocateUninitializedArray()
     {
-        Assert.Equal(4, GC.AllocateUninitializedArray<int>(4).Length);
-        Assert.Equal(4, GC.AllocateUninitializedArray<string>(4, pinned: true).Length);
-        Assert.Throws<OverflowException>(() => GC.AllocateUninitializedArray<int>(-1));
+        // 'GC.AllocateUninitializedArray' is caller-unsafe under the updated memory safety rules
+        unsafe
+        {
+            Assert.Equal(4, GC.AllocateUninitializedArray<int>(4).Length);
+            Assert.Equal(4, GC.AllocateUninitializedArray<string>(4, pinned: true).Length);
+            Assert.Throws<OverflowException>(() => GC.AllocateUninitializedArray<int>(-1));
+        }
     }
 
     [Fact]

@@ -12,7 +12,7 @@ namespace Meziantou.Polyfill.SourceGenerator.Tests;
 
 public sealed class SourceGeneratorTests
 {
-    private const string LatestDotnetPackageVersion = "11.0.0-preview.5.26302.115";
+    private const string LatestDotnetPackageVersion = "11.0.0-rc.1.26425.128";
     private const string LatestDotnetTfm = "net11.0";
 
     [Fact]
@@ -40,7 +40,9 @@ public sealed class SourceGeneratorTests
     {
         var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", LatestDotnetPackageVersion, $"ref/{LatestDotnetTfm}/");
         var result = GenerateFiles("", assemblyLocations: assemblies);
-        Assert.Empty(GetFileNames(result.GeneratorResult));
+        var generatedFileNames = GetFileNames(result.GeneratorResult).ToArray();
+
+        Assert.Empty(generatedFileNames);
     }
 
     [Fact]
@@ -93,6 +95,87 @@ public sealed class SourceGeneratorTests
     }
 
     [Fact]
+    public async Task RuntimeHelpersGetSubArrayPolyfill_SupportsArrayRangeSyntax()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "5.0.0", "ref/net5.0/");
+
+        var result = GenerateFiles(
+            """
+            public static class Test
+            {
+                public static int[] RightHalf()
+                {
+                    int[] numbers = [0, 10, 20, 30, 40, 50];
+                    int amountToDrop = numbers.Length / 2;
+                    return numbers[amountToDrop..];
+                }
+
+                public static int[] LeftHalf()
+                {
+                    int[] numbers = [0, 10, 20, 30, 40, 50];
+                    int amountToDrop = numbers.Length / 2;
+                    return numbers[..^amountToDrop];
+                }
+
+                public static int[] All()
+                {
+                    int[] numbers = [0, 10, 20, 30, 40, 50];
+                    return numbers[..];
+                }
+
+                public static int[] Invalid()
+                {
+                    int[] numbers = [1, 2, 3];
+                    return numbers[..4];
+                }
+            }
+            """,
+            assemblyLocations: assemblies);
+
+        var assembly = global::System.Reflection.Assembly.Load(result.Assembly!);
+        var type = assembly.GetType("Test")!;
+        Assert.Equal([30, 40, 50], (int[])type.GetMethod("RightHalf")!.Invoke(null, null)!);
+        Assert.Equal([0, 10, 20], (int[])type.GetMethod("LeftHalf")!.Invoke(null, null)!);
+        Assert.Equal([0, 10, 20, 30, 40, 50], (int[])type.GetMethod("All")!.Invoke(null, null)!);
+
+        var exception = Assert.Throws<global::System.Reflection.TargetInvocationException>(() => type.GetMethod("Invalid")!.Invoke(null, null));
+        Assert.IsType<ArgumentOutOfRangeException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task Path_IsPathFullyQualified_ChecksDriveLetterWithoutOverflow()
+    {
+        // The drive-letter check relies on a subtraction wrapping for characters that sort before 'a'.
+        // A consumer compiling with CheckForOverflowUnderflow must still get false rather than an
+        // OverflowException, which is why the polyfill wraps that expression in unchecked. Compiling the
+        // generated code with checkOverflow is the only way to observe this, since the checked context is
+        // fixed at the consumer's compilation and not at the call site.
+        var assemblies = await NuGetHelpers.GetNuGetReferences("NETStandard.Library", "2.0.3", "build/");
+
+        var result = GenerateFiles(
+            """
+            public static class Test
+            {
+                public static bool NonLetterDrive() => System.IO.Path.IsPathFullyQualified(@"1:\dir");
+
+                public static bool LetterDrive() => System.IO.Path.IsPathFullyQualified(@"C:\dir");
+            }
+            """,
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.IO.Path.IsPathFullyQualified(System.String)",
+            checkOverflow: true);
+
+        var assembly = global::System.Reflection.Assembly.Load(result.Assembly!);
+        var type = assembly.GetType("Test")!;
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.False((bool)type.GetMethod("NonLetterDrive")!.Invoke(null, null)!);
+            Assert.True((bool)type.GetMethod("LetterDrive")!.Invoke(null, null)!);
+        }
+    }
+
+    [Fact]
     public async Task PeriodicTimer_UsesMicrosoftBclTimeProviderTypes_WhenReferenced()
     {
         var assemblies = new List<string>();
@@ -118,9 +201,9 @@ public sealed class SourceGeneratorTests
             includedPolyfills: "T:System.Threading.PeriodicTimer");
 
         var generatedFileNames = GetFileNames(result.GeneratorResult).ToArray();
-        Assert.Contains("T_System.Threading.PeriodicTimer.g.cs", generatedFileNames);
-        Assert.DoesNotContain("T_System.Threading.ITimer.g.cs", generatedFileNames);
-        Assert.DoesNotContain("T_System.TimeProvider.g.cs", generatedFileNames);
+        Assert.Contains("T_System.Threading.PeriodicTimer.g.cs", generatedFileNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("T_System.Threading.ITimer.g.cs", generatedFileNames, StringComparer.Ordinal);
+        Assert.DoesNotContain("T_System.TimeProvider.g.cs", generatedFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -130,14 +213,14 @@ public sealed class SourceGeneratorTests
         var tempGeneration = GenerateFiles("""[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("main")]""", assemblyName: "temp", assemblyLocations: assemblies);
         Assert.Single(GetFileNames(tempGeneration.GeneratorResult), file => file is "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs");
         Assert.Single(GetFileNames(tempGeneration.GeneratorResult), file => file is "M_System.IO.TextReader.ReadToEndAsync(System.Threading.CancellationToken).g.cs");
-        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(tempGeneration.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"), StringComparison.Ordinal);
+        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(tempGeneration.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"));
 
         var temp = Path.GetTempFileName() + ".dll";
         await File.WriteAllBytesAsync(temp, tempGeneration.Assembly!, TestContext.Current.CancellationToken);
         var result = GenerateFiles("", assemblyName: "main", assemblyLocations: assemblies.Append(temp));
         Assert.Single(GetFileNames(result.GeneratorResult), file => file is "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs");
         Assert.Single(GetFileNames(result.GeneratorResult), file => file is "M_System.IO.TextReader.ReadToEndAsync(System.Threading.CancellationToken).g.cs");
-        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(result.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"), StringComparison.Ordinal);
+        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(result.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"));
 
     }
 
@@ -162,7 +245,7 @@ public sealed class SourceGeneratorTests
         // that would otherwise be ambiguous (CS0433) between proj2 and proj3.
         var result = GenerateFiles("", assemblyName: "main", assemblyLocations: assemblies.Append(proj2Dll).Append(proj3Dll));
         Assert.Single(GetFileNames(result.GeneratorResult), file => file is "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs");
-        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(result.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"), StringComparison.Ordinal);
+        Assert.Contains("[Microsoft.CodeAnalysis.EmbeddedAttribute]", GetGeneratedFileContent(result.GeneratorResult, "T_System.Diagnostics.CodeAnalysis.StringSyntaxAttribute.g.cs"));
     }
 
     [Theory]
@@ -179,6 +262,30 @@ public sealed class SourceGeneratorTests
     }
 
     [Fact]
+    public async Task GeneratedCodeCompile_WithWindowsFormsGlobalUsings()
+    {
+        // WinForms projects with ImplicitUsings bring both System.Threading and System.Windows.Forms in scope,
+        // which makes unqualified type names such as Timer ambiguous (CS0104) in the generated code.
+        var assemblies = new List<string>();
+        assemblies.AddRange(await NuGetHelpers.GetNuGetReferences("Microsoft.NETFramework.ReferenceAssemblies.net481", "1.0.3", ""));
+        assemblies.AddRange(await NuGetHelpers.GetNuGetReferences("System.Threading.Tasks.Extensions", "4.5.4", "lib/net461/"));
+        assemblies.AddRange(await NuGetHelpers.GetNuGetReferences("Microsoft.Bcl.AsyncInterfaces", "8.0.0", "lib/net462/"));
+
+        GenerateFiles(
+            """
+            global using System.Drawing;
+            global using System.Windows.Forms;
+
+            static class WinFormsUsage
+            {
+                public static object Form = typeof(Form);
+                public static object Point = typeof(Point);
+            }
+            """,
+            assemblyLocations: assemblies);
+    }
+
+    [Fact]
     public async Task GenericMathPolyfills_UseTypePresenceDefines()
     {
         var netCore31Assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "3.1.0", "ref/netcoreapp3.1/");
@@ -189,8 +296,8 @@ public sealed class SourceGeneratorTests
 
         var infiniteSequence = GetGeneratedFileContent(netCore31Result.GeneratorResult, "M_System.Linq.Enumerable.InfiniteSequence``1(``0,``0).g.cs");
         var sequence = GetGeneratedFileContent(netCore31Result.GeneratorResult, "M_System.Linq.Enumerable.Sequence``1(``0,``0,``0).g.cs");
-        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_IADDITIONOPERATORS_3", infiniteSequence, StringComparison.Ordinal);
-        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_INUMBER_1", sequence, StringComparison.Ordinal);
+        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_IADDITIONOPERATORS_3", infiniteSequence);
+        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_INUMBER_1", sequence);
 
         var net8Assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "8.0.0", "ref/net8.0/");
         var net8Result = GenerateFiles(
@@ -200,8 +307,8 @@ public sealed class SourceGeneratorTests
 
         infiniteSequence = GetGeneratedFileContent(net8Result.GeneratorResult, "M_System.Linq.Enumerable.InfiniteSequence``1(``0,``0).g.cs");
         sequence = GetGeneratedFileContent(net8Result.GeneratorResult, "M_System.Linq.Enumerable.Sequence``1(``0,``0,``0).g.cs");
-        Assert.Contains("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_IADDITIONOPERATORS_3", infiniteSequence, StringComparison.Ordinal);
-        Assert.Contains("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_INUMBER_1", sequence, StringComparison.Ordinal);
+        Assert.Contains("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_IADDITIONOPERATORS_3", infiniteSequence);
+        Assert.Contains("#define MEZIANTOU_POLYFILL_TYPE_SYSTEM_NUMERICS_INUMBER_1", sequence);
     }
 
     [Fact]
@@ -268,6 +375,29 @@ public sealed class SourceGeneratorTests
         }
     }
 
+    [Fact]
+    public async Task Nullable_GetValueRefOrDefaultRef_IsGenerated_ForOlderFrameworks()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "6.0.0", "ref/net6.0/");
+
+        var result = GenerateFiles(
+            """
+            class Test
+            {
+                static int Read(ref readonly int? value)
+                {
+                    ref readonly int valueRef = ref System.Nullable.GetValueRefOrDefaultRef(in value);
+                    return valueRef;
+                }
+            }
+            """,
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.Nullable.GetValueRefOrDefaultRef``1(System.Nullable{``0}@)",
+            languageVersion: LanguageVersion.CSharp14);
+
+        Assert.Contains(GetFileNames(result.GeneratorResult), file => file.Contains("GetValueRefOrDefaultRef", StringComparison.Ordinal));
+    }
+
     public static TheoryData<LanguageVersion, bool> GetPolyfillGenerationLanguageVersions()
     {
         return new TheoryData<LanguageVersion, bool>
@@ -298,7 +428,7 @@ public sealed class SourceGeneratorTests
             languageVersion: languageVersion);
 
         var content = GetGeneratedFileContent(result.GeneratorResult, "T_System.Buffers.SpanAction`2.g.cs");
-        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_SUPPORT_ALLOWS_REF_STRUCT", content, StringComparison.Ordinal);
+        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_SUPPORT_ALLOWS_REF_STRUCT", content);
     }
 
     [Fact]
@@ -312,7 +442,39 @@ public sealed class SourceGeneratorTests
             languageVersion: LanguageVersion.CSharp14);
 
         var content = GetGeneratedFileContent(result.GeneratorResult, "P_System.Net.Http.HttpMethod.Query.g.cs");
-        Assert.Contains("#define MEZIANTOU_POLYFILL_SUPPORT_ALLOWS_REF_STRUCT", content, StringComparison.Ordinal);
+        Assert.Contains("#define MEZIANTOU_POLYFILL_SUPPORT_ALLOWS_REF_STRUCT", content);
+    }
+
+    [Fact]
+    public async Task UpdatedMemorySafetyRulesDefine_IsNotGenerated_WhenTheCompilerFeatureIsDisabled()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "9.0.0", "ref/net9.0/");
+        var result = GenerateFiles(
+            "",
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.Console.OpenStandardInputHandle",
+            updatedMemorySafetyRules: false);
+
+        var content = GetGeneratedFileContent(result.GeneratorResult, "M_System.Console.OpenStandardInputHandle.g.cs");
+        Assert.DoesNotContain("#define MEZIANTOU_POLYFILL_SUPPORT_UPDATED_MEMORY_SAFETY_RULES", content);
+        Assert.Contains("private static extern IntPtr GetStdHandle", content);
+    }
+
+    [Fact]
+    public async Task UpdatedMemorySafetyRulesDefine_IsGenerated_WhenTheCompilerFeatureIsEnabled()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "9.0.0", "ref/net9.0/");
+
+        // 'mustCompile' asserts the generated 'extern' member carries the 'safe' modifier the rules require
+        var result = GenerateFiles(
+            "",
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.Console.OpenStandardInputHandle",
+            updatedMemorySafetyRules: true);
+
+        var content = GetGeneratedFileContent(result.GeneratorResult, "M_System.Console.OpenStandardInputHandle.g.cs");
+        Assert.Contains("#define MEZIANTOU_POLYFILL_SUPPORT_UPDATED_MEMORY_SAFETY_RULES", content);
+        Assert.Contains("private static safe extern IntPtr GetStdHandle", content);
     }
 
     public static TheoryData<LanguageVersion> GetRuntimeWithoutByRefLikeGenericSupportLanguageVersions()
@@ -333,7 +495,7 @@ public sealed class SourceGeneratorTests
         var result = GenerateFiles("", assemblyLocations: assemblies);
 
         var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames);
+        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -343,7 +505,7 @@ public sealed class SourceGeneratorTests
         var result = GenerateFiles("", assemblyLocations: assemblies, includedPolyfills: "T:Some.Type.That.Does.Not.Exist");
 
         var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames);
+        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -352,8 +514,10 @@ public sealed class SourceGeneratorTests
         var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", LatestDotnetPackageVersion, $"ref/{LatestDotnetTfm}/");
         var result = GenerateFiles("", assemblyLocations: assemblies);
 
-        var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.DoesNotContain("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames);
+        var generatedFileNames = GetFileNames(result.GeneratorResult).ToArray();
+        var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath)).ToArray();
+        Assert.Empty(generatedFileNames);
+        Assert.DoesNotContain("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -363,7 +527,7 @@ public sealed class SourceGeneratorTests
         var result = GenerateFiles("", assemblyLocations: assemblies, includedPolyfills: "T:Some.Type.That.Does.Not.Exist");
 
         var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.DoesNotContain("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames);
+        Assert.DoesNotContain("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -373,7 +537,7 @@ public sealed class SourceGeneratorTests
         var result = GenerateFiles("", assemblyLocations: assemblies, includedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})");
 
         var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.Contains("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames);
+        Assert.Contains("Microsoft.CodeAnalysis.EmbeddedAttribute.cs", allFileNames, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -389,26 +553,26 @@ public sealed class SourceGeneratorTests
 
         var lines = GetGeneratedFileLines(result.GeneratorResult, "PolyfillExtensions.g.cs");
 
-        Assert.Contains("internal static partial class PolyfillExtensions", lines);
+        Assert.Contains("internal static partial class PolyfillExtensions", lines, StringComparer.Ordinal);
 
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Byte", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Decimal", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Double", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int16", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int32", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int64", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_IntPtr", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_MD5", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_SByte", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_SHA256", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Single", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Task", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt16", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt32", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt64", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UIntPtr", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_XDocument", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions_XElement", lines);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Byte", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Decimal", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Double", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int16", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int32", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Int64", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_IntPtr", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_MD5", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_SByte", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_SHA256", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Single", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_Task", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt16", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt32", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UInt64", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_UIntPtr", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_XDocument", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions_XElement", lines, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -424,8 +588,8 @@ public sealed class SourceGeneratorTests
 
         var lines = GetGeneratedFileLines(result.GeneratorResult, "PolyfillExtensions.g.cs");
 
-        Assert.Contains("internal static partial class PolyfillExtensions_MD5", lines);
-        Assert.DoesNotContain("internal static partial class PolyfillExtensions", lines);
+        Assert.Contains("internal static partial class PolyfillExtensions_MD5", lines, StringComparer.Ordinal);
+        Assert.DoesNotContain("internal static partial class PolyfillExtensions", lines, StringComparer.Ordinal);
     }
 
     [Fact]
@@ -441,7 +605,77 @@ public sealed class SourceGeneratorTests
             languageVersion: LanguageVersion.CSharp13);
 
         var allFileNames = result.GeneratorResult.GeneratedTrees.Select(tree => Path.GetFileName(tree.FilePath));
-        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames);
+        Assert.DoesNotContain("PolyfillExtensions.g.cs", allFileNames, StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task DebugFile_NotGenerated_ByDefault()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "3.1.0", "ref/netcoreapp3.1/");
+
+        var result = GenerateFiles(
+            "",
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})");
+
+        Assert.DoesNotContain("Debug.g.cs", GetFileNames(result.GeneratorResult, includeAlwaysGeneratedFiles: true), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public async Task DebugFile_Generated_WhenEnabled()
+    {
+        var assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "3.1.0", "ref/netcoreapp3.1/");
+
+        var result = GenerateFiles(
+            "",
+            assemblyLocations: assemblies,
+            includedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})",
+            generateDebugFile: true);
+
+        var content = GetGeneratedFileContent(result.GeneratorResult, "Debug.g.cs");
+        Assert.Contains("// GenerateDebugFile: True", content);
+        Assert.Contains("// M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0}): True", content);
+    }
+
+    [Fact]
+    public async Task DebugFile_ReportsSkipReasons()
+    {
+        var netCore31Assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", "3.1.0", "ref/netcoreapp3.1/");
+        var latestAssemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETCore.App.Ref", LatestDotnetPackageVersion, $"ref/{LatestDotnetTfm}/");
+        var net462Assemblies = await NuGetHelpers.GetNuGetReferences("Microsoft.NETFramework.ReferenceAssemblies.net462", "1.0.3", "");
+
+        var excludedResult = GenerateFiles(
+            "",
+            assemblyLocations: netCore31Assemblies,
+            includedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})",
+            excludedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})",
+            generateDebugFile: true);
+        var excludedContent = GetGeneratedFileContent(excludedResult.GeneratorResult, "Debug.g.cs");
+        Assert.Contains("// M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0}): False (excluded by options)", excludedContent);
+
+        var alreadyAvailableResult = GenerateFiles(
+            "",
+            assemblyLocations: latestAssemblies,
+            includedPolyfills: "M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0})",
+            generateDebugFile: true);
+        var alreadyAvailableContent = GetGeneratedFileContent(alreadyAvailableResult.GeneratorResult, "Debug.g.cs");
+        Assert.Contains("// M:System.Linq.Enumerable.OrderDescending``1(System.Collections.Generic.IEnumerable{``0}): False (already available in compilation)", alreadyAvailableContent);
+
+        var missingTypeResult = GenerateFiles(
+            "",
+            assemblyLocations: net462Assemblies,
+            includedPolyfills: "M:System.Random.NextBytes(System.Span{System.Byte})",
+            generateDebugFile: true);
+        var missingTypeContent = GetGeneratedFileContent(missingTypeResult.GeneratorResult, "Debug.g.cs");
+        Assert.Contains("// M:System.Random.NextBytes(System.Span{System.Byte}): False (missing required features: T:System.Span`1)", missingTypeContent);
+
+        var conditionalResult = GenerateFiles(
+            "",
+            assemblyLocations: netCore31Assemblies,
+            includedPolyfills: "T:System.ITupleInternal",
+            generateDebugFile: true);
+        var conditionalContent = GetGeneratedFileContent(conditionalResult.GeneratorResult, "Debug.g.cs");
+        Assert.Contains("// T:System.ITupleInternal: False (conditional dependencies not generated: T:System.ValueTuple", conditionalContent);
     }
 
     private static string[] GetGeneratedFileLines(GeneratorDriverRunResult generatorResult, string fileName)
@@ -595,7 +829,7 @@ public sealed class SourceGeneratorTests
         }
     }
 
-    private static (GeneratorDriverRunResult GeneratorResult, Compilation OutputCompilation, byte[]? Assembly) GenerateFiles(string file, string assemblyName = "compilation", bool mustCompile = true, IEnumerable<string>? assemblyLocations = null, string? includedPolyfills = null, string? excludedPolyfills = null, LanguageVersion languageVersion = LanguageVersion.Preview, bool allowUnsafe = true)
+    private static (GeneratorDriverRunResult GeneratorResult, Compilation OutputCompilation, byte[]? Assembly) GenerateFiles(string file, string assemblyName = "compilation", bool mustCompile = true, IEnumerable<string>? assemblyLocations = null, string? includedPolyfills = null, string? excludedPolyfills = null, bool generateDebugFile = false, LanguageVersion languageVersion = LanguageVersion.Preview, bool allowUnsafe = true, bool checkOverflow = false, bool updatedMemorySafetyRules = false)
     {
         assemblyLocations ??= Array.Empty<string>();
         var references = assemblyLocations
@@ -603,11 +837,15 @@ public sealed class SourceGeneratorTests
             .ToArray();
 
         var options = new CSharpParseOptions(languageVersion: languageVersion);
+        if (updatedMemorySafetyRules)
+        {
+            options = options.WithFeatures([new KeyValuePair<string, string>("updated-memory-safety-rules", "true")]);
+        }
 
         var compilation = CSharpCompilation.Create(assemblyName,
             new[] { CSharpSyntaxTree.ParseText(file, options) },
             references,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: allowUnsafe));
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: allowUnsafe, checkOverflow: checkOverflow));
 
         var generator = new PolyfillGenerator().AsSourceGenerator();
 
@@ -618,6 +856,7 @@ public sealed class SourceGeneratorTests
             {
                 ["build_property.MeziantouPolyfill_IncludedPolyfills"] = includedPolyfills,
                 ["build_property.MeziantouPolyfill_ExcludedPolyfills"] = excludedPolyfills,
+                ["build_property.MeziantouPolyfill_GenerateDebugFile"] = generateDebugFile ? "true" : null,
             }));
 
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out var diagnostics);
@@ -759,7 +998,7 @@ public sealed class SourceGeneratorTests
                         continue;
 
                     var relativePath = Path.GetRelativePath(cacheFolder, dll).Replace('\\', '/');
-                      if (!relativePath.StartsWith(path, StringComparison.OrdinalIgnoreCase))
+                    if (!relativePath.StartsWith(path, StringComparison.OrdinalIgnoreCase))
                         continue;
 
                     if (exclusions != null)

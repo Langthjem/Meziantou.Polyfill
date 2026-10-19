@@ -6,20 +6,18 @@
     <LangVersion>preview</LangVersion>
     <NoWarn>$(NoWarns);xUnit1051</NoWarn>
 
+    <!-- 'Meziantou.Framework.Assertions' supports .NET 10 and later only, so the assertions must
+         compile against the xUnit.net ones to also support the older target frameworks -->
+    <EnableMeziantouAssertions>false</EnableMeziantouAssertions>
+
     <EmitCompilerGeneratedFiles>True</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)\GeneratedFiles\$(TargetFramework)</CompilerGeneratedFilesOutputPath>
     <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.11" />
     <PackageReference Include="System.ValueTuple" Version="4.6.2" />
-    <PackageReference Include="Meziantou.Xunit.v3.ParallelTestFramework" Version="1.0.6" />
-	  <PackageReference Include="xunit.v3" Version="3.2.2" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-      <PrivateAssets>all</PrivateAssets>
-    </PackageReference>
     <ProjectReference Include="..\Meziantou.Polyfill\Meziantou.Polyfill.csproj" PrivateAssets="all" ReferenceOutputAssembly="false" OutputItemType="Analyzer" SetTargetFramework="TargetFramework=netstandard2.0" />
 
     <Reference Include="System.Net.Http" Condition="$(TargetFramework) == 'net472' OR $(TargetFramework) == 'net48' OR $(TargetFramework) == 'net481'" />
